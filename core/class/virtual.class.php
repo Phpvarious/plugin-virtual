@@ -159,6 +159,8 @@ class virtual extends eqLogic {
 		}
 	}
 	
+	
+	
 	public function copyFromEqLogic($_eqLogic_id) {
 		$eqLogic = eqLogic::byId($_eqLogic_id);
 		
@@ -171,11 +173,21 @@ class virtual extends eqLogic {
 		foreach ($eqLogic->getCategory() as $key => $value) {
 			$this->setCategory($key, $value);
 		}
+		$arrayEquipmentCmd = $this->getCmd();
+		if (sizeof($arrayEquipmentCmd) > 1) {
+			$virtual_with_commands = true;
+		} else {
+			$virtual_with_commands = false;
+		}
 		foreach ($eqLogic->getCmd() as $cmd_def) {
 			$cmd_name = $cmd_def->getName();
 			if ($cmd_name == __('Rafraichir',__FILE__)) {
 				$cmd_name .= '_1';
 			}
+			if ($virtual_with_commands) {
+				$cmd_name .= '_' . $cmd_def->getId();
+			}
+			log::add('virtual', 'debug', 'import equipement : ' . $eqLogic->getName() . ' > ajout de la commande : ' . $cmd_name);
 			$cmd = new virtualCmd();
 			$cmd->setName($cmd_name);
 			$cmd->setEqLogic_id($this->getId());
@@ -242,6 +254,9 @@ class virtualCmd extends cmd {
 			if ($this->getConfiguration('infoName') == '') {
 				throw new Exception(__('Le nom de la commande info ne peut etre vide', __FILE__));
 			}
+			if (strpos($this->getConfiguration('infoName'),'core::jeeObject::summary') !== false) {
+				return;
+			}
 			$cmd = cmd::byId(str_replace('#', '', $this->getConfiguration('infoName')));
 			if (is_object($cmd)) {
 				if($cmd->getId() == $this->getId()){
@@ -278,19 +293,28 @@ class virtualCmd extends cmd {
 			if (strpos($calcul, '#' . $this->getId() . '#') !== false) {
 				throw new Exception(__('Vous ne pouvez faire un calcul sur la valeur elle meme (boucle infinie) : ', __FILE__).$this->getName());
 			}
+			$added_value = [];
 			preg_match_all("/#([0-9]*)#/", $calcul, $matches);
 			$value = '';
 			foreach ($matches[1] as $cmd_id) {
 				if (is_numeric($cmd_id)) {
 					$cmd = self::byId($cmd_id);
 					if (is_object($cmd) && $cmd->getType() == 'info') {
+						if(isset($added_value[$cmd_id])){
+							continue;	
+						}
 						$value .= '#' . $cmd_id . '#';
+						$added_value[$cmd_id] = $cmd_id;
 					}
 				}
 			}
 			preg_match_all("/variable\((.*?)\)/", $calcul, $matches);
 			foreach ($matches[1] as $variable) {
+				if(isset($added_value['#variable(' . $variable . ')#'])){
+					continue;	
+				}
 				$value .= '#variable(' . $variable . ')#';
+				$added_value['#variable(' . $variable . ')#'] = '#variable(' . $variable . ')#';
 			}
 			$this->setValue($value);
 		}
@@ -324,6 +348,10 @@ class virtualCmd extends cmd {
 			}
 			break;
 			case 'action':
+			if (strpos($this->getConfiguration('infoName'),'core::jeeObject::summary') !== false) {
+				jeeObject::actionOnSummary($this,$_options);
+				return;
+			}
 			$virtualCmd = virtualCmd::byId($this->getConfiguration('infoId'));
 			if (!is_object($virtualCmd)) {
 				$cmds = explode('&&', $this->getConfiguration('infoName'));
